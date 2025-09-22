@@ -11,7 +11,10 @@ from webdriver_manager.chrome import ChromeDriverManager
 from pymongo import MongoClient
 import pprint
 from bs4 import BeautifulSoup
-
+import pandas as pd
+#######################
+## 동별 top 구한후 블로그 크롤링
+#########################
 # --- ⚙️ 설정 정보 ---
 MONGO_CONFIG = {
     'host': '192.168.0.222',
@@ -21,26 +24,62 @@ MONGO_CONFIG = {
     'db_name': 'jongro'
 }
 RESTAURANTS_COLLECTION = 'RESTAURANTS_GENERAL'
-CRAWLED_COLLECTION = 'crawled_nave_blogs'
+CRAWLED_COLLECTION = 'crawled_naver_api_blogs'
 NAVER_CLIENT_ID = "46_7kjfK4xilqSfTXXK8"
 NAVER_CLIENT_SECRET = "ZmiT61_9du"
-BLOGS_PER_RESTAURANT = 10
+BLOGS_PER_RESTAURANT = 20
 
 def get_dong_top5_from_mongodb(db):
-    print("--- 1단계: TOP 5 맛집 추출 시작 ---")
+    print("--- 1단계: 맛집 데이터 불러오기 및 가중 점수 계산 시작 ---")
     collection = db[RESTAURANTS_COLLECTION]
-    pipeline = [
-        {'$match': {'admin_dong': {'$exists': True, '$ne': '분류불가'}}},
-        {'$sort': {'weighted_score': -1}},
-        {'$group': {
-            '_id': '$admin_dong',
-            # 🔥 변경점 1: name과 함께 category도 가져오도록 $push 수정
-            'restaurants': {'$push': {'name': '$name', 'category': '$category'}}
-        }},
-        {'$project': {'dong': '$_id', 'top5_restaurants': {'$slice': ['$restaurants', 5]}, '_id': 0}}
-    ]
-    target_list = list(collection.aggregate(pipeline))
-    print(f"✅ 1단계 완료: 총 {len(target_list)}개 동의 맛집 정보를 추출했습니다.")
+    
+    # 1. MongoDB에서 필요한 데이터 전체를 불러와 DataFrame으로 변환
+    #    (주의: rating과 visitor_reviews 필드가 DB에 있어야 합니다)
+    try:
+        data = list(collection.find(
+            {'admin_dong': {'$exists': True, '$ne': '분류불가'}},
+            {'name': 1, 'category': 1, 'admin_dong': 1, 'rating': 1, 'visitor_reviews': 1, '_id': 0}
+        ))
+        if not data:
+            print("❌ 오류: RESTAURANTS_GENERAL 컬렉션에 데이터가 없습니다.")
+            return []
+        df = pd.DataFrame(data)
+        
+        # 2. 데이터 클리닝 (숫자가 아닌 값이나 빈 값을 0으로 처리)
+        df['rating'] = pd.to_numeric(df['rating'], errors='coerce').fillna(0)
+        df['visitor_reviews'] = pd.to_numeric(df['visitor_reviews'], errors='coerce').fillna(0)
+        
+    except Exception as e:
+        print(f"❌ DB에서 데이터를 불러오는 중 오류 발생: {e}")
+        return []
+
+    # 3. 가중 평점(weighted_score) 계산
+    # C = 전체 식당의 평균 평점
+    C = df['rating'].mean()
+    # m = 평점의 신뢰도를 결정하는 최소 리뷰 수 (상수값)
+    m = 200 
+
+    def calculate_weighted_score(row):
+        v = row['visitor_reviews']
+        R = row['rating']
+        # 베이즈 평균 공식 적용
+        return (v / (v + m)) * R + (m / (v + m)) * C
+
+    df['weighted_score'] = df.apply(calculate_weighted_score, axis=1)
+
+    # 4. 계산된 점수를 기준으로 각 동(dong)별 Top 5 선정
+    top5_df = df.sort_values('weighted_score', ascending=False).groupby('admin_dong').head(10)
+
+    # 5. 다음 단계(크롤링)에서 사용할 수 있는 형태로 데이터 포맷 변경
+    target_list = []
+    for dong, group in top5_df.groupby('admin_dong'):
+        dong_data = {
+            'dong': dong,
+            'top5_restaurants': group[['name', 'category']].to_dict('records')
+        }
+        target_list.append(dong_data)
+        
+    print(f"✅ 1단계 완료: 가중 점수 계산 후 {len(target_list)}개 동의 Top 5 맛집 정보를 추출했습니다.")
     return target_list
 
 def crawl_and_save_blogs_incrementally(dong_top5_list, db):
@@ -136,7 +175,6 @@ def crawl_and_save_blogs_incrementally(dong_top5_list, db):
         driver.quit()
         print("\n--- Selenium 드라이버 종료 ---")
 
-# --- 메인 코드 실행 ---
 if __name__ == "__main__":
     client = None
     try:
