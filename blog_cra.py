@@ -24,10 +24,10 @@ MONGO_CONFIG = {
     'db_name': 'jongro'
 }
 RESTAURANTS_COLLECTION = 'RESTAURANTS_GENERAL'
-CRAWLED_COLLECTION = 'crawled_naver_api_blogs'
+CRAWLED_COLLECTION = 'naverblogs_cleansing'
 NAVER_CLIENT_ID = "46_7kjfK4xilqSfTXXK8"
 NAVER_CLIENT_SECRET = "ZmiT61_9du"
-BLOGS_PER_RESTAURANT = 20
+BLOGS_PER_RESTAURANT = 100
 
 def get_dong_top5_from_mongodb(db):
     print("--- 1단계: 맛집 데이터 불러오기 및 가중 점수 계산 시작 ---")
@@ -68,7 +68,7 @@ def get_dong_top5_from_mongodb(db):
     df['weighted_score'] = df.apply(calculate_weighted_score, axis=1)
 
     # 4. 계산된 점수를 기준으로 각 동(dong)별 Top 5 선정
-    top5_df = df.sort_values('weighted_score', ascending=False).groupby('admin_dong').head(10)
+    top5_df = df.sort_values('weighted_score', ascending=False).groupby('admin_dong').head(15)
 
     # 5. 다음 단계(크롤링)에서 사용할 수 있는 형태로 데이터 포맷 변경
     target_list = []
