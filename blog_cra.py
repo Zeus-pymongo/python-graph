@@ -12,10 +12,7 @@ from pymongo import MongoClient
 import pprint
 from bs4 import BeautifulSoup
 import pandas as pd
-#######################
-## 동별 top 구한후 블로그 크롤링
-#########################
-# --- ⚙️ 설정 정보 ---
+
 MONGO_CONFIG = {
     'host': '192.168.0.222',
     'port': 27017,
@@ -68,11 +65,11 @@ def get_dong_top5_from_mongodb(db):
     df['weighted_score'] = df.apply(calculate_weighted_score, axis=1)
 
     # 4. 계산된 점수를 기준으로 각 동(dong)별 Top 5 선정
-    top5_df = df.sort_values('weighted_score', ascending=False).groupby('admin_dong').head(15)
+    top15_df = df.sort_values('weighted_score', ascending=False).groupby('admin_dong').head(15)
 
     # 5. 다음 단계(크롤링)에서 사용할 수 있는 형태로 데이터 포맷 변경
     target_list = []
-    for dong, group in top5_df.groupby('admin_dong'):
+    for dong, group in top15_df.groupby('admin_dong'):
         dong_data = {
             'dong': dong,
             'top5_restaurants': group[['name', 'category']].to_dict('records')
@@ -89,7 +86,7 @@ def crawl_and_save_blogs_incrementally(dong_top5_list, db):
         return
 
     crawled_collection = db[CRAWLED_COLLECTION]
-    crawled_collection.delete_many({})
+    #crawled_collection.delete_many({})
     print(f"✅ '{CRAWLED_COLLECTION}' 컬렉션을 초기화했습니다.")
     
     total_saved_count = 0
@@ -156,7 +153,7 @@ def crawl_and_save_blogs_incrementally(dong_top5_list, db):
                             document = {
                                 'admin_dong': dong_name, 
                                 'restaurant_name': restaurant_name,
-                                'category': restaurant_category, # 🔥 변경점 3: 저장할 document에 category 추가
+                                'category': restaurant_category, 
                                 'title': post['title'], 
                                 'post_date': post['postdate'],
                                 'blog_url': post['link'],
